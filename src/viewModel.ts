@@ -26,6 +26,10 @@ type Listener = () => void;
 
 export class ExpoSketchViewModel {
   private listeners = new Set<Listener>();
+  // 每次加载自增的代次令牌：晚到的旧加载结果一律丢弃，避免覆盖更新一次的结果
+  private loadToken = 0;
+  // 用户是否已在当前工作副本上做过编辑；一旦为 true，任何加载结果都不能整体替换文档
+  private userEdited = false;
   private stateValue: ExpoSketchState = {
     phase: 'loading',
     document: starter,
@@ -48,12 +52,47 @@ export class ExpoSketchViewModel {
   }
 
   async initialize() {
+    const token = this.beginLoad();
     try {
       const document = await this.repository.load();
+      // 加载期间又发起了更新的加载（如 StrictMode 双跑 / 用户重试）：本次结果已过期
+      if (token !== this.loadToken) return;
+      if (this.userEdited) {
+        // 用户已在工作副本上编辑：加载结果再晚到也不能抹掉改动，改为把当前版本回写存储
+        this.commit({ phase: 'ready', notice: { tone: 'success', message: '布局已打开，你的编辑已保留并保存' } });
+        void this.persist();
+        return;
+      }
       this.commit({ document, selectedId: document.elements[0]?.id ?? null, phase: 'ready', notice: { tone: 'success', message: '布局已就绪，可开始编辑' } });
     } catch {
-      this.commit({ phase: 'error', notice: { tone: 'error', message: '布局读取失败，已载入安全示例' } });
+      if (token !== this.loadToken) return;
+      // 读取失败：保留当前工作副本进入降级态，编辑仍然可用，只是不再保证自动保存
+      this.commit({ phase: 'error', notice: { tone: 'error', message: '布局读取失败，当前使用安全示例，编辑仍可继续' } });
     }
+  }
+
+  async retryLoad() {
+    if (this.stateValue.phase !== 'error') return;
+    const token = this.beginLoad();
+    this.commit({ notice: { tone: 'info', message: '正在重试读取本地布局…' } });
+    try {
+      const document = await this.repository.load();
+      if (token !== this.loadToken) return;
+      if (this.userEdited) {
+        this.commit({ phase: 'ready', notice: { tone: 'success', message: '已恢复连接，你的编辑已保留并保存' } });
+        void this.persist();
+        return;
+      }
+      this.commit({ document, selectedId: document.elements[0]?.id ?? null, phase: 'ready', notice: { tone: 'success', message: '布局已读取，可开始编辑' } });
+    } catch {
+      if (token !== this.loadToken) return;
+      this.commit({ phase: 'error', notice: { tone: 'error', message: '读取仍失败，继续使用当前工作副本，编辑不会丢失' } });
+    }
+  }
+
+  private beginLoad() {
+    this.loadToken += 1;
+    return this.loadToken;
   }
 
   selectElement(id: string) { this.commit({ selectedId: id }); }
@@ -115,6 +154,8 @@ export class ExpoSketchViewModel {
   }
 
   private commitAndPersist(patch: Partial<ExpoSketchState>) {
+    // 任何用户发起的文档修改都在此登记：此后加载结果只能排队认输，不能整体覆盖工作副本
+    this.userEdited = true;
     this.commit(patch);
     void this.persist();
   }
