@@ -24,12 +24,8 @@ export class LocalLayoutRepository implements LayoutRepository {
   constructor(private readonly storage: DocumentStorageService) {}
 
   async load(): Promise<LayoutDocument> {
-    try {
-      const saved = await this.storage.read();
-      return isDocument(saved) ? saved : createStarterDocument();
-    } catch {
-      return createStarterDocument();
-    }
+    const saved = await this.storage.read();
+    return isDocument(saved) ? saved : createStarterDocument();
   }
 
   async save(document: LayoutDocument): Promise<void> {

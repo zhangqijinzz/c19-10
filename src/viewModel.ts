@@ -34,9 +34,13 @@ export class ExpoSketchViewModel {
     selectedElement: starterRenderElements.find((element) => element.id === 'stage-1') ?? null,
     mode: 'edit',
     analysis: analyzeLayout(createStarterDocument()),
-    notice: { tone: 'info', message: '正在恢复最近布局…' },
+    notice: { tone: 'info', message: '正在恢复最近布局…你仍可以立即编辑' },
     lastSavedAt: null,
   };
+  private initialization: Promise<void> | null = null;
+  private hasLocalEdits = false;
+  private saveInFlight = false;
+  private saveQueued = false;
 
   constructor(private readonly repository: LayoutRepository) {}
 
@@ -47,13 +51,9 @@ export class ExpoSketchViewModel {
     return () => this.listeners.delete(listener);
   }
 
-  async initialize() {
-    try {
-      const document = await this.repository.load();
-      this.commit({ document, selectedId: document.elements[0]?.id ?? null, phase: 'ready', notice: { tone: 'success', message: '布局已就绪，可开始编辑' } });
-    } catch {
-      this.commit({ phase: 'error', notice: { tone: 'error', message: '布局读取失败，已载入安全示例' } });
-    }
+  initialize() {
+    if (!this.initialization) this.initialization = this.loadInitialDocument();
+    return this.initialization;
   }
 
   selectElement(id: string) { this.commit({ selectedId: id }); }
@@ -111,20 +111,53 @@ export class ExpoSketchViewModel {
 
   resetExample() {
     const document = createStarterDocument();
-    this.commitAndPersist({ document, selectedId: 'stage-1', mode: 'edit', notice: { tone: 'success', message: '已恢复示例布局' } });
+    this.hasLocalEdits = true;
+    this.commit({ document, selectedId: 'stage-1', mode: 'edit', notice: { tone: 'success', message: '已恢复示例布局' } });
+    void this.scheduleSave();
+  }
+
+  private async loadInitialDocument() {
+    try {
+      const document = await this.repository.load();
+      if (this.hasLocalEdits) {
+        this.commit({ phase: 'ready', notice: { tone: 'warning', message: '读取到的旧布局已到达，因你已开始编辑，本次不会覆盖当前布局' } });
+      } else {
+        this.commit({ document, selectedId: document.elements[0]?.id ?? null, phase: 'ready', notice: { tone: 'success', message: '布局已就绪，可开始编辑' } });
+      }
+    } catch {
+      if (this.hasLocalEdits) {
+        this.commit({ phase: 'error', notice: { tone: 'warning', message: '本地布局读取失败；你的未保存编辑仍保留，可继续修改' } });
+      } else {
+        this.commit({ phase: 'error', notice: { tone: 'error', message: '布局读取失败，已载入安全示例；编辑仍会保存到本地' } });
+      }
+    }
   }
 
   private commitAndPersist(patch: Partial<ExpoSketchState>) {
+    this.hasLocalEdits = true;
     this.commit(patch);
-    void this.persist();
+    void this.scheduleSave();
   }
 
-  private async persist() {
+  private async scheduleSave() {
+    if (this.saveInFlight) {
+      this.saveQueued = true;
+      return;
+    }
+
+    this.saveInFlight = true;
     try {
-      await this.repository.save(this.stateValue.document);
+      do {
+        this.saveQueued = false;
+        const document = this.stateValue.document;
+        await this.repository.save(document);
+      } while (this.saveQueued);
       this.commit({ lastSavedAt: Date.now() });
     } catch {
       this.commit({ notice: { tone: 'error', message: '本地保存失败，当前编辑仍保留在页面中' } });
+    } finally {
+      this.saveInFlight = false;
+      if (this.saveQueued) void this.scheduleSave();
     }
   }
 

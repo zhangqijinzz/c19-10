@@ -9,6 +9,22 @@ const fakeRepository = (initial: LayoutDocument | null = null): LayoutRepository
   save: vi.fn(async (_document) => {}),
 });
 
+const deferredRepository = (saved: LayoutDocument) => {
+  let resolveLoad: (document: LayoutDocument) => void = () => {};
+  const load = vi.fn(() => new Promise<LayoutDocument>((resolve) => { resolveLoad = resolve; }));
+  const save = vi.fn(async (_document: LayoutDocument) => {});
+  const repository: LayoutRepository = { load, save };
+  return { repository, resolve: () => resolveLoad(saved) };
+};
+
+const deferredFailingRepository = () => {
+  let rejectLoad: (error: Error) => void = () => {};
+  const load = vi.fn(() => new Promise<LayoutDocument>((_resolve, reject) => { rejectLoad = reject; }));
+  const save = vi.fn(async (_document: LayoutDocument) => {});
+  const repository: LayoutRepository = { load, save };
+  return { repository, reject: () => rejectLoad(new Error('bad storage')) };
+};
+
 describe('ExpoSketchViewModel', () => {
   it('initializes and updates the selected layout', async () => {
     const repository = fakeRepository();
@@ -25,6 +41,41 @@ describe('ExpoSketchViewModel', () => {
     const vm = new ExpoSketchViewModel(fakeRepository());
     vm.moveElement('stage-1', 4.5, 2.5);
     expect(vm.state.analysis.overlaps.length).toBeGreaterThan(0);
+  });
+
+  it('does not let a late load replace an edit made during loading', async () => {
+    const saved = createStarterDocument();
+    const { repository, resolve } = deferredRepository(saved);
+    const vm = new ExpoSketchViewModel(repository);
+    const initialization = vm.initialize();
+
+    vm.moveElement('stage-1', 12.3, 4.5);
+    resolve();
+    await initialization;
+
+    const moved = vm.state.document.elements.find((element) => element.id === 'stage-1');
+    expect(moved).toMatchObject({ x: 12.3, y: 4.5 });
+    expect(vm.state.phase).toBe('ready');
+    expect(vm.state.notice.tone).toBe('warning');
+    expect(repository.save).toHaveBeenCalledTimes(1);
+    expect(repository.save).toHaveBeenCalledWith(vm.state.document);
+  });
+
+  it('enters degraded mode but keeps an edit made before a failed load', async () => {
+    const { repository, reject } = deferredFailingRepository();
+    const vm = new ExpoSketchViewModel(repository);
+    const initialization = vm.initialize();
+
+    vm.moveElement('stage-1', 15, 6);
+    reject();
+    await initialization;
+
+    const moved = vm.state.document.elements.find((element) => element.id === 'stage-1');
+    expect(moved).toMatchObject({ x: 15, y: 6 });
+    expect(vm.state.phase).toBe('error');
+    expect(vm.state.notice.message).toContain('编辑仍保留');
+    expect(repository.save).toHaveBeenCalledTimes(1);
+    expect(repository.save).toHaveBeenCalledWith(vm.state.document);
   });
 
   it('recovers the example if repository loading fails', async () => {

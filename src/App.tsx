@@ -10,8 +10,7 @@ import { useExpoSketchViewModel } from './hooks/useExpoSketchViewModel';
 function App() {
   const { state, vm } = useExpoSketchViewModel();
   const [projectTitle, setProjectTitle] = useState('');
-
-  if (state.phase === 'loading') return <div className="loading-screen"><div className="loading-mark">✦</div><strong>正在打开 ExpoSketch</strong><span>恢复最近一次场地布局…</span></div>;
+  const syncLabel = state.phase === 'loading' ? '正在读取本地数据' : state.phase === 'error' ? '读取失败 · 安全模式' : '自动保存已开启';
 
   return <div className="app-shell">
     <aside className="left-rail">
@@ -20,17 +19,19 @@ function App() {
       <div className="rail-divider" />
       <ElementPalette onAdd={vm.addElement.bind(vm)} />
       <div className="tips-card"><span className="tips-icon">⌘</span><div><strong>快速提示</strong><p>拖动元素调整位置<br />检查模式查看通行风险</p></div></div>
-      <div className="rail-footer"><span className="online-dot" />本地工作区 <span className="version">v0.1</span></div>
+      <div className="rail-footer"><span className={`online-dot phase-${state.phase}`} />{state.phase === 'error' ? '安全模式工作区' : '本地工作区'} <span className="version">v0.1</span></div>
     </aside>
     <main className="main-stage">
-      <header className="topbar"><div className="breadcrumb"><span>我的项目</span><b>/</b><strong>{state.document.title}</strong></div><div className="top-actions"><span className="autosave-label"><i /> 自动保存已开启</span><button type="button" className="share-button">导出布局 <span>↗</span></button><button type="button" className="avatar-button">Z</button></div></header>
+      <header className="topbar"><div className="breadcrumb"><span>我的项目</span><b>/</b><strong>{state.document.title}</strong></div><div className="top-actions"><span className="autosave-label"><i className={`phase-${state.phase}`} /> {syncLabel}</span><button type="button" className="share-button">导出布局 <span>↗</span></button><button type="button" className="avatar-button">Z</button></div></header>
+      {state.phase === 'loading' ? <div className="sync-banner is-loading" role="status" aria-live="polite"><strong>正在恢复本地布局</strong><span>你可以立即编辑；晚到的加载结果不会覆盖当前改动。</span></div> : null}
+      {state.phase === 'error' ? <div className="sync-banner is-error" role="alert"><strong>本地布局读取失败</strong><span>当前为安全示例，你的编辑不会丢失，并会继续尝试保存。</span></div> : null}
       <div className="workspace-heading"><div><span className="section-kicker">LAYOUT EDITOR / A-01</span><h1>场地布局编辑器</h1><p>用拖放方式规划区域，保持主要通道畅通。</p></div><div className="heading-stats"><div><strong>{state.document.elements.length}</strong><span>元素</span></div><div><strong>{state.document.field.width}×{state.document.field.height}</strong><span>场地尺寸</span></div></div></div>
       <div className="editor-grid">
         <section className="canvas-panel"><div className="canvas-toolbar"><div className="toolbar-title"><span className="tool-grid">▦</span><div><strong>展厅平面图</strong><small>比例 1 : 100 · 单位：米</small></div></div><div className="toolbar-actions"><span className="zoom-label">⌕ 100%</span><button type="button" aria-label="更多布局选项">•••</button></div></div><FieldCanvas field={state.document.field} elements={state.renderElements} selectedId={state.selectedId} mode={state.mode} overlaps={state.analysis.overlaps} bounds={state.analysis.bounds} channels={state.analysis.channels} path={state.analysis.path} onSelect={vm.selectElement.bind(vm)} onMove={vm.moveElement.bind(vm)} /></section>
         <aside className="inspector"><InspectorPanel selectedElement={state.selectedElement} onRename={vm.renameSelected.bind(vm)} onResize={vm.resizeSelected.bind(vm)} onRotate={vm.rotateSelected.bind(vm)} onDelete={vm.removeSelected.bind(vm)} /><FieldSettingsPanel document={state.document} onResizeField={vm.resizeField.bind(vm)} onReset={vm.resetExample.bind(vm)} /></aside>
       </div>
       <AnalysisPanel analysis={state.analysis} mode={state.mode} elementCount={state.document.elements.length} />
-      <StatusBar mode={state.mode} analysis={state.analysis} notice={state.notice} elementCount={state.document.elements.length} lastSavedAt={state.lastSavedAt} onModeChange={vm.setMode.bind(vm)} />
+      <StatusBar phase={state.phase} mode={state.mode} analysis={state.analysis} notice={state.notice} elementCount={state.document.elements.length} lastSavedAt={state.lastSavedAt} onModeChange={vm.setMode.bind(vm)} />
     </main>
   </div>;
 }

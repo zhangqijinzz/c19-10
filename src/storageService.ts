@@ -13,7 +13,12 @@ export class BrowserStorageService implements DocumentStorageService {
   async read(): Promise<LayoutDocument | null> {
     if (!canUseIndexedDb()) {
       const raw = window.localStorage.getItem(STORAGE_KEY);
-      return raw ? (JSON.parse(raw) as LayoutDocument) : null;
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw) as LayoutDocument;
+      } catch {
+        return null;
+      }
     }
     return this.withDatabase((store) => new Promise<LayoutDocument | null>((resolve, reject) => {
       const request = store.get(STORAGE_KEY);
